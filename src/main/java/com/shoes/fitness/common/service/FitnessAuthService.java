@@ -1,11 +1,15 @@
 package com.shoes.fitness.common.service;
 
 
+import com.shoes.fitness.common.dto.FileUploadResult;
 import com.shoes.fitness.common.dto.FitnessLoginRequest;
 import com.shoes.fitness.common.dto.FitnessLoginResponse;
 import com.shoes.fitness.common.dto.FitnessRegisterRequest;
+import com.shoes.fitness.common.repository.CommonFileRepository;
 import com.shoes.fitness.common.repository.FitnessPartnerRepository;
 import com.shoes.fitness.common.util.JwtUtil;
+import com.shoes.fitness.common.util.UuidUtil;
+import com.shoes.fitness.entity.CommonFile;
 import com.shoes.fitness.entity.FitnessPartner;
 import com.shoes.fitness.entity.RefreshFitnessToken;
 import lombok.RequiredArgsConstructor;
@@ -13,6 +17,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.time.LocalDateTime;
 import java.util.UUID;
@@ -23,8 +28,10 @@ import java.util.UUID;
 public class FitnessAuthService {
 
     private final FitnessPartnerRepository fitnessPartnerRepository;
+    private final CommonFileRepository commonFileRepository;
     private final RefreshFitnessTokenService refreshFitnessTokenService;
     private final FitnessPartnerLogService fitnessPartnerLogService;
+    private final FileUploadService fileUploadService;
     private final PasswordEncoder passwordEncoder;
     private final JwtUtil jwtUtil;
 
@@ -76,6 +83,96 @@ public class FitnessAuthService {
     }
 
     /**
+     * 피트니스 파트너 회원가입 (파일 업로드 포함)
+     */
+    @Transactional
+    public FitnessLoginResponse registerWithFile(FitnessRegisterRequest request,
+                                                  MultipartFile businessRegistrationFile,
+                                                  String clientIp) {
+        // 중복 확인
+        if (fitnessPartnerRepository.existsByFitnessLoginId(request.getFitnessLoginId())) {
+            throw new RuntimeException("이미 사용 중인 로그인 ID입니다.");
+        }
+        if (fitnessPartnerRepository.existsByOwnerEmail(request.getOwnerEmail())) {
+            throw new RuntimeException("이미 등록된 이메일입니다.");
+        }
+        if (request.getBusinessNumber() == null || request.getBusinessNumber().isEmpty()) {
+            throw new RuntimeException("사업자등록번호는 필수입니다.");
+        }
+        if (fitnessPartnerRepository.existsByBusinessNumber(request.getBusinessNumber())) {
+            throw new RuntimeException("이미 등록된 사업자등록번호입니다.");
+        }
+
+        String fitnessId = UUID.randomUUID().toString().replace("-", "");
+
+        // 피트니스 파트너 생성
+        FitnessPartner fitnessPartner = FitnessPartner.builder()
+                .fitnessId(fitnessId)
+                .fitnessLoginId(request.getFitnessLoginId())
+                .fitnessPassword(passwordEncoder.encode(request.getPassword()))
+                .ownerName(request.getOwnerName())
+                .ownerPhone(request.getOwnerPhone())
+                .ownerEmail(request.getOwnerEmail())
+                .ownerBirthDate(request.getOwnerBirthDate())
+                .ownerGender(request.getOwnerGender() != null && !request.getOwnerGender().isEmpty() ?
+                    FitnessPartner.Gender.valueOf(request.getOwnerGender()) : null)
+                .gymName(request.getGymName())
+                .gymType(request.getGymType() != null && !request.getGymType().isEmpty() ?
+                    FitnessPartner.GymType.valueOf(request.getGymType()) : FitnessPartner.GymType.INDIVIDUAL)
+                .franchiseName(request.getFranchiseName())
+                .businessNumber(request.getBusinessNumber())
+                .partnerStatus(FitnessPartner.PartnerStatus.ACTIVE)
+                .build();
+
+        fitnessPartnerRepository.save(fitnessPartner);
+
+        // 사업자등록증 파일 업로드 처리 (필수)
+        if (businessRegistrationFile == null || businessRegistrationFile.isEmpty()) {
+            throw new RuntimeException("사업자등록증 파일은 필수입니다.");
+        }
+
+        try {
+                String directory = "fitness/" + fitnessId + "/business";
+                FileUploadResult uploadResult = fileUploadService.uploadImageFile(businessRegistrationFile, directory);
+
+                // CommonFile 엔티티 저장
+                CommonFile commonFile = CommonFile.builder()
+                        .id(UuidUtil.generateShortUuid())
+                        .partnerId(fitnessId)
+                        .fileType(CommonFile.FileType.BUSINESS_LICENSE)
+                        .fileName(uploadResult.getFileName())
+                        .originalFileName(businessRegistrationFile.getOriginalFilename())
+                        .ncpBucket(uploadResult.getBucket())
+                        .ncpKey(uploadResult.getKey())
+                        .fileUrl(uploadResult.getFileUrl())
+                        .fileSize(uploadResult.getFileSize())
+                        .fileTypeMime(uploadResult.getContentType())
+                        .uploadStatus(CommonFile.UploadStatus.COMPLETED)
+                        .isVerified(false)
+                        .uploadedBy(fitnessId)
+                        .build();
+
+                commonFileRepository.save(commonFile);
+
+                // 임시 파일 정리
+                if (uploadResult.getTempFilePath() != null) {
+                    fileUploadService.cleanupTempFile(uploadResult.getTempFilePath());
+                }
+
+            log.info("사업자등록증 파일 업로드 완료: fitnessId={}, fileId={}", fitnessId, commonFile.getId());
+        } catch (Exception e) {
+            log.error("사업자등록증 파일 업로드 실패: {}", e.getMessage());
+            throw new RuntimeException("사업자등록증 파일 업로드에 실패했습니다: " + e.getMessage());
+        }
+
+        log.info("피트니스 파트너 회원가입 완료 (with file): fitnessId={}, loginId={}",
+                fitnessPartner.getFitnessId(), fitnessPartner.getFitnessLoginId());
+
+        // 자동 로그인 처리
+        return generateLoginResponse(fitnessPartner);
+    }
+
+    /**
      * 피트니스 파트너 로그인
      */
     @Transactional
@@ -110,7 +207,7 @@ public class FitnessAuthService {
         }
 
         // 비밀번호 확인
-        if (!passwordEncoder.matches(request.getPassword(), fitnessPartner.getFitnessPassword())) {
+        if (!passwordEncoder.matches(request.getFitnessPassword(), fitnessPartner.getFitnessPassword())) {
             handleLoginFailure(fitnessPartner, clientIp, userAgent);
             throw new RuntimeException("아이디 또는 비밀번호가 일치하지 않습니다.");
         }

@@ -8,9 +8,12 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.time.LocalDate;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -23,9 +26,9 @@ public class AuthController {
     private final FitnessAuthService fitnessAuthService;
 
     /**
-     * 피트니스 파트너 회원가입
+     * 피트니스 파트너 회원가입 (JSON)
      */
-    @PostMapping("/register")
+    @PostMapping(value = "/register", consumes = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<ApiResponse<FitnessLoginResponse>> register(
             @Valid @RequestBody FitnessRegisterRequest request,
             HttpServletRequest httpRequest) {
@@ -40,6 +43,60 @@ public class AuthController {
 
         } catch (Exception e) {
             log.error("회원가입 실패: {}", e.getMessage());
+            return ResponseEntity.badRequest()
+                    .body(ApiResponse.<FitnessLoginResponse>builder()
+                            .success(false)
+                            .message(e.getMessage())
+                            .data(null)
+                            .build());
+        }
+    }
+
+    /**
+     * 피트니스 파트너 회원가입 (Multipart Form Data - 파일 업로드 포함)
+     */
+    @PostMapping(value = "/register", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<ApiResponse<FitnessLoginResponse>> registerWithFile(
+            @RequestParam("fitnessLoginId") String fitnessLoginId,
+            @RequestParam("fitnessPassword") String fitnessPassword,
+            @RequestParam("ownerName") String ownerName,
+            @RequestParam("ownerPhone") String ownerPhone,
+            @RequestParam("ownerEmail") String ownerEmail,
+            @RequestParam(value = "ownerBirthDate", required = false) String ownerBirthDate,
+            @RequestParam(value = "ownerGender", required = false) String ownerGender,
+            @RequestParam("gymName") String gymName,
+            @RequestParam("gymType") String gymType,
+            @RequestParam(value = "franchiseName", required = false) String franchiseName,
+            @RequestParam("businessNumber") String businessNumber,
+            @RequestParam("businessRegistrationFile") MultipartFile businessRegistrationFile,
+            HttpServletRequest httpRequest) {
+
+        try {
+            String clientIp = getClientIp(httpRequest);
+            log.info("피트니스 파트너 회원가입 시도 (multipart): {} (IP: {})", fitnessLoginId, clientIp);
+
+            // Request 객체 생성
+            FitnessRegisterRequest request = FitnessRegisterRequest.builder()
+                    .fitnessLoginId(fitnessLoginId)
+                    .password(fitnessPassword)
+                    .ownerName(ownerName)
+                    .ownerPhone(ownerPhone)
+                    .ownerEmail(ownerEmail)
+                    .ownerBirthDate(ownerBirthDate != null && !ownerBirthDate.isEmpty() ? LocalDate.parse(ownerBirthDate) : null)
+                    .ownerGender(ownerGender)
+                    .gymName(gymName)
+                    .gymType(gymType)
+                    .franchiseName(franchiseName)
+                    .businessNumber(businessNumber)
+                    .build();
+
+            // 파일 포함 회원가입 처리
+            FitnessLoginResponse response = fitnessAuthService.registerWithFile(request, businessRegistrationFile, clientIp);
+
+            return ResponseEntity.ok(ApiResponse.success("회원가입 성공", response));
+
+        } catch (Exception e) {
+            log.error("회원가입 실패 (multipart): {}", e.getMessage());
             return ResponseEntity.badRequest()
                     .body(ApiResponse.<FitnessLoginResponse>builder()
                             .success(false)
@@ -161,7 +218,7 @@ public class AuthController {
     /**
      * 로그인 ID 중복 확인
      */
-    @GetMapping("/check-login-id/{loginId}")
+    @GetMapping({"/check-login-id/{loginId}", "/check-fitness-login-id/{loginId}"})
     public ResponseEntity<ApiResponse<Map<String, Boolean>>> checkLoginId(
             @PathVariable String loginId) {
 
