@@ -41,3 +41,4 @@ src/main/resources/application-production.yml
 *.jar
 *.war
 *.ear
+application-localhost.yml

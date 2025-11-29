@@ -71,7 +71,7 @@ public class FitnessAuthService {
                     FitnessPartner.GymType.valueOf(request.getGymType()) : FitnessPartner.GymType.INDIVIDUAL)
                 .franchiseName(request.getFranchiseName())
                 .businessNumber(request.getBusinessNumber())
-                .partnerStatus(FitnessPartner.PartnerStatus.ACTIVE)
+                .partnerStatus(FitnessPartner.PartnerStatus.PENDING)
                 .build();
 
         fitnessPartnerRepository.save(fitnessPartner);
@@ -154,12 +154,16 @@ public class FitnessAuthService {
 
                 commonFileRepository.save(commonFile);
 
+                // FitnessPartner에 파일 경로 저장
+                fitnessPartner.setBusinessRegistrationFile(uploadResult.getFileUrl());
+                fitnessPartnerRepository.save(fitnessPartner);
+
                 // 임시 파일 정리
                 if (uploadResult.getTempFilePath() != null) {
                     fileUploadService.cleanupTempFile(uploadResult.getTempFilePath());
                 }
 
-            log.info("사업자등록증 파일 업로드 완료: fitnessId={}, fileId={}", fitnessId, commonFile.getId());
+            log.info("사업자등록증 파일 업로드 완료: fitnessId={}, fileId={}, fileUrl={}", fitnessId, commonFile.getId(), uploadResult.getFileUrl());
         } catch (Exception e) {
             log.error("사업자등록증 파일 업로드 실패: {}", e.getMessage());
             throw new RuntimeException("사업자등록증 파일 업로드에 실패했습니다: " + e.getMessage());
