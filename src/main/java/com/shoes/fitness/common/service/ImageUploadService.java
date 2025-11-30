@@ -48,7 +48,8 @@ public class ImageUploadService {
             }
 
             // 업로드 타입 검증
-            if (!"product-image".equals(type)) {
+            String directory = getDirectoryByType(type);
+            if (directory == null) {
                 throw new IllegalArgumentException("지원하지 않는 업로드 타입입니다: " + type);
             }
 
@@ -157,8 +158,16 @@ public class ImageUploadService {
         switch (type) {
             case "product-image":
                 return "product-images";
+            case "thumbnail":
+                return "mini-homepage/thumbnails";
+            case "gallery":
+                return "mini-homepage/galleries";
+            case "event":
+                return "mini-homepage/events";
+            case "community":
+                return "community/posts";
             default:
-                return "images";
+                return null;
         }
     }
 
